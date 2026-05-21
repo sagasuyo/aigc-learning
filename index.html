@@ -1,0 +1,331 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AIGC 应用开发学习手册</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #0f0f0f; color: #e0e0e0; line-height: 1.8; padding: 16px; max-width: 800px; margin: 0 auto; }
+h1 { font-size: 1.5em; color: #fff; margin: 24px 0 12px; border-bottom: 2px solid #333; padding-bottom: 8px; }
+h2 { font-size: 1.2em; color: #7dd3fc; margin: 20px 0 8px; }
+h3 { font-size: 1em; color: #a78bfa; margin: 16px 0 6px; }
+p { margin: 8px 0; }
+code { background: #1e1e1e; color: #f59e0b; padding: 2px 6px; border-radius: 4px; font-size: 0.9em; }
+pre { background: #1a1a2e; border: 1px solid #333; border-radius: 8px; padding: 12px; overflow-x: auto; margin: 12px 0; font-size: 0.85em; line-height: 1.6; }
+pre code { background: none; color: #e0e0e0; padding: 0; }
+table { width: 100%; border-collapse: collapse; margin: 12px 0; font-size: 0.9em; }
+th, td { border: 1px solid #333; padding: 8px; text-align: left; }
+th { background: #1a1a2e; color: #7dd3fc; }
+.nav { position: sticky; top: 0; background: #0f0f0f; padding: 12px 0; border-bottom: 1px solid #333; z-index: 100; }
+.nav a { color: #7dd3fc; text-decoration: none; margin-right: 12px; font-size: 0.85em; }
+.card { background: #1a1a2e; border: 1px solid #333; border-radius: 12px; padding: 16px; margin: 12px 0; }
+.highlight { color: #4ade80; font-weight: bold; }
+.warn { color: #f59e0b; }
+details { margin: 8px 0; }
+summary { cursor: pointer; color: #7dd3fc; font-weight: bold; padding: 8px 0; }
+</style>
+</head>
+<body>
+<div class="nav">
+<a href="#overview">总览</a>
+<a href="#diffusion">扩散模型</a>
+<a href="#pytorch">PyTorch</a>
+<a href="#python">Python语法</a>
+<a href="#lora">LoRA训练</a>
+<a href="#ecosystem">模型生态</a>
+</div>
+
+<h1 id="overview">📋 学习总览</h1>
+<div class="card">
+<h2>目标岗位</h2>
+<p>AIGC 技术运营 / AI 应用开发工程师</p>
+<h2>硬件环境</h2>
+<p>租赁 4090D（24GB 显存）+ Mac 本地练手</p>
+<h2>学习姿态</h2>
+<p>• 大脚本让 AI 生成，自己负责<span class="highlight">审和改</span></p>
+<p>• 重点学"认识参数、会调整、能判断对不对"</p>
+<p>• 不需要从零默写代码，需要<span class="highlight">看懂 + 能排错</span></p>
+<h2>进度里程碑</h2>
+<p>1. ✅ PyTorch 基础</p>
+<p>2. ✅ diffusers 加载模型生图</p>
+<p>3. → 训练 LoRA</p>
+<p>4. → FastAPI 包装成 API</p>
+<p>5. → Gradio 做界面</p>
+<p>6. → Docker 打包</p>
+</div>
+
+<h1 id="diffusion">🎨 扩散模型原理</h1>
+<div class="card">
+<h2>一句话</h2>
+<p>扩散模型 = 学会预测噪声。训练时给图加噪声让模型学预测，生成时从纯噪声开始一步步减掉噪声得到图片。</p>
+
+<h2>核心逻辑</h2>
+<p><span class="highlight">干净图 = 噪声图 - 噪声</span></p>
+<p>模型不画画，模型"擦玻璃"。它告诉你脏东西（噪声）在哪，你擦掉，画就出来了。</p>
+
+<h2>训练过程</h2>
+<pre><code>for 每张训练图片:
+    1. 随机选一个时间步 t（比如第 500 步）
+    2. 给这张图加 t 步的噪声 → 得到模糊图
+    3. 把模糊图 + 时间步 t 喂给模型
+    4. 模型预测"这张图里有什么噪声"
+    5. 用真实噪声和预测噪声算 loss
+    6. 梯度下降，更新模型参数</code></pre>
+
+<h2>生成过程（出图时）</h2>
+<pre><code>步骤1：纯噪声 → 喂给模型 → 预测噪声 → 减掉 → 图A
+步骤2：图A    → 喂给模型 → 预测噪声 → 减掉 → 图B
+步骤3：图B    → 喂给模型 → 预测噪声 → 减掉 → 图C
+...重复 30 次（steps=30）...
+步骤30：→ 最终清晰图片</code></pre>
+<p class="warn">⚠️ 每一步都要调用模型。steps=30 就是跑 30 次模型，所以越多越慢。</p>
+
+<h2>参数是什么</h2>
+<p>参数 = 模型里的几十亿个小数，是"学到的知识"的载体。</p>
+<table>
+<tr><th>模型</th><th>参数量</th><th>文件大小</th></tr>
+<tr><td>SD 1.5</td><td>8.6 亿</td><td>~4 GB</td></tr>
+<tr><td>SDXL</td><td>35 亿</td><td>~7 GB</td></tr>
+<tr><td>FLUX Dev</td><td>120 亿</td><td>~24 GB</td></tr>
+</table>
+</div>
+
+<div class="card">
+<h2>UNet vs Transformer</h2>
+<h3>UNet（SD 1.5 / SDXL 用的）</h3>
+<p>核心操作：<span class="highlight">卷积</span> — 用小窗口（3×3）在图上滑动，每次只看局部一小块。</p>
+<p>结构：先压缩（看大局）→ 最小处做判断 → 再放大（还原细节）。形状像字母 U。</p>
+<p>天花板原因：结构固定，加参数的方式有限，改一处其他都要跟着改。</p>
+
+<h3>Transformer（FLUX / SD3 / Wan 用的）</h3>
+<p>核心操作：<span class="highlight">注意力（Attention）</span> — 每个位置都能直接看到所有其他位置。</p>
+<p>结构：把图切成小块（patch），然后重复堆叠相同的 Attention 层。</p>
+<p>优势：加层就能变强（scaling law），不需要"先压后放"的弯路。</p>
+<p>代价：计算量大（O(n²)），更吃显存。</p>
+
+<table>
+<tr><th>对比</th><th>UNet</th><th>Transformer</th></tr>
+<tr><td>核心操作</td><td>卷积（看局部）</td><td>注意力（看全局）</td></tr>
+<tr><td>结构</td><td>固定的 U 形</td><td>重复堆叠积木块</td></tr>
+<tr><td>扩展性</td><td>差（改不动）</td><td>好（加层就行）</td></tr>
+<tr><td>代表模型</td><td>SD 1.5, SDXL</td><td>FLUX, SD3, Wan</td></tr>
+<tr><td>参数上限</td><td>~3B 就到头</td><td>可以堆到 100B+</td></tr>
+</table>
+</div>
+
+<div class="card">
+<h2>显存与 GPU</h2>
+<p><span class="highlight">显存 = GPU 的工作台</span>。模型必须加载到显存里才能算。</p>
+<p>GPU 快是因为能同时算很多东西（并行计算），像 10000 个人同时工作。</p>
+<p>OOM = 显存不够 → 减 batch size / 用 fp16 / 量化</p>
+
+<h3>Mac 统一内存架构</h3>
+<p>CPU + GPU + 内存在同一块芯片上，共享内存。GPU 能用全部内存，但计算速度比 NVIDIA 慢很多。</p>
+</div>
+
+<h1 id="pytorch">🔧 PyTorch 基础</h1>
+<div class="card">
+<h2>Tensor（GPU 上的数组）</h2>
+<pre><code>import torch
+
+# 创建
+a = torch.tensor([1, 2, 3])
+rand = torch.randn(2, 3)       # 随机数
+
+# 运算（和 numpy 一样）
+x + y       # 加法
+x * y       # 乘法
+x.mean()    # 平均
+x.sum()     # 求和
+
+# 放到 GPU
+x = x.to("cuda")
+# 搬回 CPU
+x = x.cpu()</code></pre>
+</div>
+
+<div class="card">
+<h2>nn.Module（定义网络）</h2>
+<p>固定套路：<code>__init__</code> 里放层，<code>forward</code> 里定义数据怎么走。</p>
+<pre><code>class MyNet(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.layer1 = nn.Linear(784, 128)  # 784进，128出
+        self.layer2 = nn.Linear(128, 10)   # 128进，10出
+
+    def forward(self, x):
+        x = self.layer1(x)      # 过第一层
+        x = torch.relu(x)       # 激活
+        x = self.layer2(x)      # 过第二层
+        return x
+
+# model(data) 自动调用 forward
+output = model(data)</code></pre>
+</div>
+
+<div class="card">
+<h2>训练循环（核心五行）</h2>
+<p>训练本质 = <span class="highlight">梯度下降 = 不断降低 loss</span></p>
+<pre><code>optimizer.zero_grad()               # 清空上轮梯度
+output = model(data)                # forward（做题）
+loss = loss_fn(output, label)       # 算 loss（对答案）
+loss.backward()                     # 算梯度（知道哪里错）
+optimizer.step()                    # 更新参数（改正）</code></pre>
+<table>
+<tr><th>角色</th><th>做什么</th></tr>
+<tr><td>model</td><td>做预测的</td></tr>
+<tr><td>loss_fn</td><td>衡量预测和正确答案差多远</td></tr>
+<tr><td>optimizer</td><td>根据 loss 去调整 model 的参数</td></tr>
+</table>
+<p>重复几十万次后模型就学会了。</p>
+</div>
+
+<div class="card">
+<h2>DataLoader（喂数据）</h2>
+<p>Dataset = 装数据的箱子（告诉怎么取）</p>
+<p>DataLoader = 搬运工（每次取一批喂给模型）</p>
+<pre><code>dataset = datasets.MNIST("./data", train=True, download=True)
+dataloader = DataLoader(dataset, batch_size=32, shuffle=True)
+
+for images, labels in dataloader:
+    # 每次拿到 32 张图和 32 个标签
+    images = images.to("cuda")
+    # ... 训练循环</code></pre>
+</div>
+
+<div class="card">
+<h2>GPU 操作</h2>
+<pre><code># 检查 GPU
+torch.cuda.is_available()
+
+# 搬到 GPU（模型和数据必须在同一设备）
+model = model.to("cuda")
+data = data.to("cuda")
+
+# 省显存
+with torch.no_grad():       # 推理时不记录梯度
+    output = model(data)
+model = model.half()        # fp16 半精度
+torch.cuda.empty_cache()    # 清理缓存</code></pre>
+<p class="warn">常见报错：CUDA out of memory → 减 batch size / 用 fp16</p>
+</div>
+
+<h1 id="python">🐍 Python 语法速查</h1>
+<div class="card">
+<h2>8 条规则（无例外）</h2>
+<table>
+<tr><th>符号</th><th>意思</th><th>例子</th></tr>
+<tr><td><code>.</code></td><td>打开抽屉（访问里面的东西）</td><td><code>model.training</code></td></tr>
+<tr><td><code>()</code></td><td>执行（用拿出来的工具）</td><td><code>print("hi")</code></td></tr>
+<tr><td><code>=</code></td><td>存起来</td><td><code>x = 5</code></td></tr>
+<tr><td><code>[]</code></td><td>取第几个 / 列表</td><td><code>images[0]</code></td></tr>
+<tr><td><code>:</code></td><td>接下来是内容</td><td><code>if x > 0:</code></td></tr>
+<tr><td>缩进</td><td>属于上面那行</td><td>for 循环里的代码</td></tr>
+<tr><td><code>import</code></td><td>导入工具</td><td><code>import torch</code></td></tr>
+<tr><td><code>#</code></td><td>注释（给人看的）</td><td><code># 说明</code></td></tr>
+</table>
+
+<h2>关键理解</h2>
+<p><code>.</code> 不是"执行"，是"访问里面的东西"。里面可以是数据（名词）也可以是能力（方法）。</p>
+<p>有没有 <code>()</code> 决定是"拿出来看看"还是"拿出来用"：</p>
+<pre><code>model.parameters        # 只是拿出来（没执行）
+model.parameters()      # 拿出来并且用了（执行）
+
+self.data_dir           # 拿到一个路径（数据）
+self.data_dir.glob("*.png")  # 路径的 glob 能力，执行它</code></pre>
+
+<h2>补充</h2>
+<p><code>==</code> 判断相等，<code>=</code> 赋值</p>
+<p><code>f"step_{i}"</code> → f-string，花括号里的变量会被替换成实际值</p>
+<p><code>%</code> 取余数：<code>500 % 500 = 0</code>，<code>501 % 500 = 1</code></p>
+</div>
+
+<h1 id="lora">🎯 LoRA 训练</h1>
+<div class="card">
+<h2>LoRA 是什么</h2>
+<p>LoRA = 给模型加一个"小插件"，只训练这个插件（几十 MB），不动原模型（几 GB）。</p>
+<p>效果：让基础模型学会特定风格/角色/概念。</p>
+
+<h2>训练流程</h2>
+<p>1. 准备 15-30 张目标风格图片</p>
+<p>2. 每张图写一个标注（caption），包含触发词</p>
+<p>3. 运行训练脚本，等 10-20 分钟</p>
+<p>4. 得到 LoRA 文件，加载后用触发词出图</p>
+
+<h2>核心参数（调这三个就够）</h2>
+<table>
+<tr><th>参数</th><th>作用</th><th>调大了</th><th>调小了</th></tr>
+<tr><td>LORA_RANK</td><td>LoRA 大小</td><td>学得多但容易过拟合</td><td>学得少但泛化好</td></tr>
+<tr><td>LEARNING_RATE</td><td>学习速度</td><td>学得快但可能崩</td><td>学得慢但稳定</td></tr>
+<tr><td>TRAIN_STEPS</td><td>训练多久</td><td>学得充分但可能过拟合</td><td>学得不够</td></tr>
+</table>
+
+<h2>不同场景推荐起点</h2>
+<table>
+<tr><th>场景</th><th>rank</th><th>lr</th><th>steps</th><th>图片数</th></tr>
+<tr><td>学画风</td><td>16</td><td>1e-4</td><td>1000-1500</td><td>15-30</td></tr>
+<tr><td>学人脸</td><td>8</td><td>5e-5</td><td>800-1200</td><td>10-20</td></tr>
+<tr><td>学物体/IP</td><td>16</td><td>1e-4</td><td>1000-2000</td><td>15-25</td></tr>
+<tr><td>学构图</td><td>32</td><td>1e-4</td><td>1500-2500</td><td>20-40</td></tr>
+</table>
+
+<h2>过拟合判断</h2>
+<p>表现：生成的图和训练图几乎一模一样，换 prompt 也不变。</p>
+<p>解决：减 rank 或减 steps。</p>
+</div>
+
+<div class="card">
+<h2>代码不用记，会改这些就行</h2>
+<p>每次训练新 LoRA 只需要改：</p>
+<p>• 训练图片（换到 dataset 文件夹）</p>
+<p>• 标注文本（每张图的 .txt 文件）</p>
+<p>• 触发词（标注里的固定前缀）</p>
+<p>• 三个参数（rank / lr / steps）</p>
+
+<h2>偶尔需要改代码的场景</h2>
+<p>• 图片格式混着（改文件过滤逻辑）</p>
+<p>• 想中途生成样图看效果（加几行生图代码）</p>
+<p>• 标注格式不同（改读文件的方式）</p>
+<p>• 换模型架构（让 AI 重新生成脚本）</p>
+<p class="warn">→ 这些都让 AI 帮你改，你负责审</p>
+</div>
+
+<h1 id="ecosystem">🌐 模型生态</h1>
+<div class="card">
+<h2>Checkpoint vs 拆开加载</h2>
+<table>
+<tr><th>加载方式</th><th>适用模型</th><th>说明</th></tr>
+<tr><td>Load Checkpoint（全家桶）</td><td>SD 1.5, SDXL</td><td>一个文件 = UNet + CLIP + VAE</td></tr>
+<tr><td>分开加载</td><td>FLUX, SD3, Wan</td><td>Transformer + CLIP + T5 + VAE 各自独立</td></tr>
+<tr><td>Nunchaku</td><td>FLUX/Wan 量化版</td><td>压缩后省显存</td></tr>
+</table>
+
+<h2>主流模型对比</h2>
+<table>
+<tr><th>模型</th><th>画质</th><th>显存</th><th>生态</th><th>特点</th></tr>
+<tr><td>SD 1.5</td><td>中</td><td>4-6 GB</td><td>极丰富</td><td>社区模型最多</td></tr>
+<tr><td>SDXL</td><td>高</td><td>8-12 GB</td><td>丰富</td><td>通用，写实+动漫</td></tr>
+<tr><td>FLUX.1</td><td>很高</td><td>12-24 GB</td><td>增长中</td><td>当前开源最强</td></tr>
+<tr><td>Z-Image</td><td>高</td><td>~8 GB</td><td>刚起步</td><td>中文场景好</td></tr>
+</table>
+
+<h2>关键概念</h2>
+<p><span class="highlight">UNet</span> = 预测噪声的核心网络 = LoRA 加在它上面</p>
+<p><span class="highlight">VAE</span> = 图片编解码器（潜空间 ↔ 像素）</p>
+<p><span class="highlight">CLIP</span> = 理解 prompt 文字的组件</p>
+<p><span class="highlight">Scheduler</span> = 控制每步去多少噪声的调度器</p>
+<p><span class="highlight">Civitai</span> = SD 生态最大的模型/LoRA 分享社区</p>
+
+<h2>Python vs ComfyUI</h2>
+<p>• ComfyUI = 创作工具（试效果、调参、搭工作流）</p>
+<p>• Python = 工程工具（训练、批量生成、部署 API）</p>
+<p>• 两者不冲突，日常出图用 ComfyUI，做工程用 Python</p>
+</div>
+
+<div style="text-align:center; padding: 40px 0; color: #666; font-size: 0.8em;">
+<p>AIGC 应用开发学习手册 · 最后更新 2026-05-21</p>
+</div>
+
+</body>
+</html>
